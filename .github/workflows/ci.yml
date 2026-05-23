@@ -27,18 +27,17 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: backend
-        run: npm ci
+        run: npm ci --workspace=backend
 
       - name: Generate Prisma client
         working-directory: backend
@@ -57,7 +56,7 @@ jobs:
           STRIPE_WEBHOOK_SECRET: whsec_placeholder
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           directory: backend/coverage
 
@@ -67,18 +66,18 @@ jobs:
     needs: backend-test
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Install & Build
-        working-directory: backend
         run: |
-          npm ci
-          npx prisma generate
-          npm run build
+          npm ci --workspace=backend
+          cd backend && npx prisma generate && npm run build
         env:
           DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder

@@ -1,0 +1,175 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UrgencyLevel {
+  LOW
+  MEDIUM
+  HIGH
+  FLASH
+}
+
+enum ListingStatus {
+  DRAFT
+  ACTIVE
+  RESERVED
+  SOLD
+  EXPIRED
+  CANCELLED
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum AgentStatus {
+  ACTIVE
+  PAUSED
+  STOPPED
+}
+
+model User {
+  id                String        @id @default(uuid())
+  email             String        @unique
+  password          String
+  name              String
+  phone             String?
+  avatarUrl         String?
+  role              Role          @default(USER)
+  stripeCustomerId  String?       @unique
+  pushToken         String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  listings          Listing[]
+  purchases         Transaction[] @relation("buyer")
+  sales             Transaction[] @relation("seller")
+  agentRules        AgentRule[]
+  notifications     Notification[]
+  reviews           Review[]      @relation("reviewer")
+  reviewsReceived   Review[]      @relation("reviewee")
+
+  @@map("users")
+}
+
+model Listing {
+  id           String        @id @default(uuid())
+  title        String
+  description  String
+  price        Float
+  urgency      UrgencyLevel  @default(LOW)
+  status       ListingStatus @default(ACTIVE)
+  photos       String[]
+  category     String
+  latitude     Float?
+  longitude    Float?
+  address      String?
+  city         String?
+  expiresAt    DateTime
+  viewCount    Int           @default(0)
+  sellerId     String
+  seller       User          @relation(fields: [sellerId], references: [id])
+  transaction  Transaction?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([status, urgency])
+  @@index([latitude, longitude])
+  @@index([expiresAt])
+  @@index([sellerId])
+  @@map("listings")
+}
+
+model Transaction {
+  id                    String            @id @default(uuid())
+  listingId             String            @unique
+  listing               Listing           @relation(fields: [listingId], references: [id])
+  buyerId               String
+  buyer                 User              @relation("buyer", fields: [buyerId], references: [id])
+  sellerId              String
+  seller                User              @relation("seller", fields: [sellerId], references: [id])
+  amount                Float
+  platformFee           Float
+  sellerAmount          Float
+  status                TransactionStatus @default(PENDING)
+  stripePaymentIntentId String?           @unique
+  stripeTransferId      String?
+  agentRuleId           String?
+  agentRule             AgentRule?        @relation(fields: [agentRuleId], references: [id])
+  isAgentPurchase       Boolean           @default(false)
+  completedAt           DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  @@map("transactions")
+}
+
+model AgentRule {
+  id              String       @id @default(uuid())
+  userId          String
+  user            User         @relation(fields: [userId], references: [id])
+  name            String
+  status          AgentStatus  @default(ACTIVE)
+  maxPrice        Float
+  categories      String[]
+  urgencyLevels   UrgencyLevel[]
+  maxDistanceKm   Float?
+  userLatitude    Float?
+  userLongitude   Float?
+  keywords        String[]
+  dailyBudget     Float
+  spentToday      Float        @default(0)
+  totalPurchases  Int          @default(0)
+  transactions    Transaction[]
+  lastRunAt       DateTime?
+  budgetResetAt   DateTime     @default(now())
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([userId, status])
+  @@map("agent_rules")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  body      String
+  type      String
+  data      Json?
+  read      Boolean  @default(false)
+  sentAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@map("notifications")
+}
+
+model Review {
+  id          String   @id @default(uuid())
+  reviewerId  String
+  reviewer    User     @relation("reviewer", fields: [reviewerId], references: [id])
+  revieweeId  String
+  reviewee    User     @relation("reviewee", fields: [revieweeId], references: [id])
+  rating      Int
+  comment     String?
+  createdAt   DateTime @default(now())
+
+  @@unique([reviewerId, revieweeId])
+  @@map("reviews")
+}

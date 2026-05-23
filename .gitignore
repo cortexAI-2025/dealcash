@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+.env
+*.env.local
+coverage/
+logs/
+*.log
+.DS_Store
+.expo/
+*.tsbuildinfo
+prisma/migrations/

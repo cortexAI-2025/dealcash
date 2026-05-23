@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "DealCash",
+    "slug": "dealcash",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#6C63FF"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.dealcash.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "DealCash uses your location to show nearby deals.",
+        "NSCameraUsageDescription": "DealCash needs camera access to add photos to listings.",
+        "NSPhotoLibraryUsageDescription": "DealCash needs photo library access to add photos to listings."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#6C63FF"
+      },
+      "package": "com.dealcash.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      "expo-location",
+      "expo-camera",
+      "expo-notifications"
+    ],
+    "extra": {
+      "apiUrl": "http://localhost:3000",
+      "eas": {
+        "projectId": "dealcash-project-id"
+      }
+    }
+  }
+}

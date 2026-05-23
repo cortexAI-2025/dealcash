@@ -1,0 +1,193 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Build profile'
+        required: true
+        default: preview
+        type: choice
+        options:
+          - preview    # debug APK, no signing required
+          - production # signed release APK (requires keystore secrets)
+
+# Cancel redundant in-progress runs on the same branch
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  JAVA_VERSION: '17'
+
+jobs:
+  build-apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # ── Node.js ─────────────────────────────────────────────────────────────
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # ── Java (Gradle needs JDK 17) ───────────────────────────────────────
+      - name: Setup JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: gradle
+
+      # ── Install npm dependencies ─────────────────────────────────────────
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Expo CLI ─────────────────────────────────────────────────────────
+      - name: Install Expo CLI
+        run: npm install -g @expo/cli
+
+      # ── Android SDK (pre-installed on ubuntu-latest, just export paths) ──
+      - name: Configure Android SDK paths
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+
+      # ── Generate native Android project via expo prebuild ────────────────
+      - name: Expo prebuild (Android)
+        working-directory: mobile
+        run: npx expo prebuild --platform android --clean --no-install
+        env:
+          # Needed if your app.json references any private plugins
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      # ── Gradle cache ─────────────────────────────────────────────────────
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      # ── Keystore (release / production only) ─────────────────────────────
+      - name: Decode & configure keystore
+        if: |
+          github.event.inputs.profile == 'production' ||
+          startsWith(github.ref, 'refs/tags/v')
+        working-directory: mobile/android
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > app/dealcash.keystore
+          cat >> gradle.properties << 'EOF'
+          DEALCASH_STORE_FILE=dealcash.keystore
+          DEALCASH_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}
+          DEALCASH_STORE_PASSWORD=${{ secrets.ANDROID_STORE_PASSWORD }}
+          DEALCASH_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      # ── Inject signing config into app/build.gradle (release only) ───────
+      - name: Patch build.gradle with signing config
+        if: |
+          github.event.inputs.profile == 'production' ||
+          startsWith(github.ref, 'refs/tags/v')
+        working-directory: mobile/android
+        run: |
+          # Insert signingConfigs block and wire it to release buildType
+          python3 << 'PYEOF'
+          import re, pathlib
+
+          gradle = pathlib.Path("app/build.gradle").read_text()
+
+          signing_block = """
+              signingConfigs {
+                  release {
+                      storeFile file(DEALCASH_STORE_FILE)
+                      storePassword DEALCASH_STORE_PASSWORD
+                      keyAlias DEALCASH_KEY_ALIAS
+                      keyPassword DEALCASH_KEY_PASSWORD
+                  }
+              }
+          """
+
+          # Add signingConfigs before buildTypes
+          gradle = gradle.replace("    buildTypes {", signing_block + "    buildTypes {", 1)
+
+          # Wire release buildType to signingConfigs.release
+          gradle = re.sub(
+              r"(release\s*\{)",
+              r"\1\n            signingConfig signingConfigs.release",
+              gradle, count=1
+          )
+
+          pathlib.Path("app/build.gradle").write_text(gradle)
+          PYEOF
+
+      # ── Gradle build ─────────────────────────────────────────────────────
+      - name: Make gradlew executable
+        working-directory: mobile/android
+        run: chmod +x gradlew
+
+      - name: Build APK
+        id: build
+        working-directory: mobile/android
+        run: |
+          if [[ "${{ github.event.inputs.profile }}" == "production" || "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "Building RELEASE APK..."
+            ./gradlew assembleRelease --no-daemon
+            echo "apk_path=app/build/outputs/apk/release/app-release.apk" >> $GITHUB_OUTPUT
+            echo "apk_name=dealcash-release" >> $GITHUB_OUTPUT
+          else
+            echo "Building DEBUG APK..."
+            ./gradlew assembleDebug --no-daemon
+            echo "apk_path=app/build/outputs/apk/debug/app-debug.apk" >> $GITHUB_OUTPUT
+            echo "apk_name=dealcash-preview" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Rename APK with version info ─────────────────────────────────────
+      - name: Rename APK
+        run: |
+          VERSION="${{ github.ref_name }}"
+          FILENAME="${{ steps.build.outputs.apk_name }}-${VERSION}.apk"
+          cp mobile/android/${{ steps.build.outputs.apk_path }} "$FILENAME"
+          echo "APK_FILE=$FILENAME" >> $GITHUB_ENV
+
+      # ── Upload as GitHub Actions artifact ────────────────────────────────
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.apk_name }}-${{ github.run_number }}
+          path: ${{ env.APK_FILE }}
+          retention-days: 30
+
+      # ── Create GitHub Release (on version tags only) ─────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APK_FILE }}
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: DealCash ${{ github.ref_name }}
+          body: |
+            ## DealCash ${{ github.ref_name }}
+
+            ### Install
+            Download `${{ env.APK_FILE }}` and transfer it to your Android device.
+            Enable **Install from unknown sources** in Settings before installing.
+
+            ### Changelog
+            See commits since previous release.
